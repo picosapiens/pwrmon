@@ -30,6 +30,8 @@
 #define TFT_DC       PA3 // 12 // PA15                
 #define TFT_RST      PA2 // 14 // PB3  
 #define analogVoltagePin PA0
+#define clamp1Pin PA1
+#define clamp2Pin PA6
 
 #define SCREENHEIGHT 320
 #define SCREENWIDTH 240
@@ -52,7 +54,10 @@ Adafruit_ILI9341_STM tft = Adafruit_ILI9341_STM(TFT_CS, TFT_DC, TFT_RST); // Use
 #define ADCBUFFERSIZE 2048 // must be power of two
 uint16_t triggerindex;
 uint16_t ADCCounter=0;
-uint16_t ADCBuffer[ADCBUFFERSIZE]; /* = {
+uint32_t ADCBuffer[ADCBUFFERSIZE]; 
+//uint16_t DualBuffer[ADCBUFFERSIZE];
+//uint16_t ADCBuffer[ADCBUFFERSIZE]; 
+/* = {
    184,  187,  190,  193,  196,  199,  202,  205,  208,  211,  214,  217,  221,  224,  227,  230 ,
    233,  236,  239,  242,  246,  249,  252,  255,  258,  261,  264,  268,  271,  274,  277,  280 ,
    283,  286,  289,  293,  296,  299,  302,  305,  308,  311,  314,  317,  320,  323,  326,  329 ,
@@ -119,7 +124,7 @@ uint16_t ADCBuffer[ADCBUFFERSIZE]; /* = {
    138,  140,  143,  146,  149,  152,  154,  157,  160,  163,  166,  169,  172,  175,  178,  181 
 };*/
 float uspersample = 13.5; // nominal time step
-float uVpercount = 48840;
+float uVpercount = 60000;
 
 float freq = 0;
 float thd = 0;
@@ -134,7 +139,7 @@ int Adiv = 0;
 
 int sum3(int i) // to filter out noise
 {
-  return ADCBuffer[(ADCCounter+i+ADCBUFFERSIZE-1)%ADCBUFFERSIZE]+ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]+ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE];
+  return (int16_t)ADCBuffer[(ADCCounter+i+ADCBUFFERSIZE-2)%ADCBUFFERSIZE]+(int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]+(int16_t)ADCBuffer[(ADCCounter+i+2)%ADCBUFFERSIZE];
 }
 
 void plot_waveform() // plot waveform and calculate THD
@@ -147,12 +152,12 @@ void plot_waveform() // plot waveform and calculate THD
   uint16_t foundpcrossings = 0;
   
   // Identify two consecutive positive crossings of zero volts
-  for( int i=2; i<ADCBUFFERSIZE; i++)
+  for( int i=2; i<ADCBUFFERSIZE-1; i++)
   {
-    if( ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE] > datamax )
-      datamax = ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE];
-    if( ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE] < datamin )
-      datamin = ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE];
+    if( (int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE] > datamax )
+      datamax = (int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE];
+    if( (int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE] < datamin )
+      datamin = (int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE];
     if ((sum3(i) <= 3*ZEROVOLTS) && (sum3(i + 1) > 3*ZEROVOLTS))
       crossings[foundpcrossings++] = i;
     if ( 2 == foundpcrossings )
@@ -176,7 +181,9 @@ void plot_waveform() // plot waveform and calculate THD
   tft.fillRect(col,220, 240-2*BARWIDTH-1, 100, COLOR_BLACK);
 
   bool once = true;
-  uint32_t datarmsac = 0;
+  uint32_t voltsrmsac = 0;
+  uint32_t amps1rms = 0;
+  uint32_t amps2rms = 0;
   for( int i=1; i<crossings[1]-crossings[0]; i++)
   {
     // Find the first index in the next column
@@ -191,7 +198,7 @@ void plot_waveform() // plot waveform and calculate THD
       x0 = x1;
       lastvalue = value;
     }*/
-     value = (ADCBuffer[(ADCCounter+crossings[0]+i)%ADCBUFFERSIZE]) >> SHIFTDISTANCE;
+     value = ((int16_t)ADCBuffer[(ADCCounter+crossings[0]+i)%ADCBUFFERSIZE]) >> SHIFTDISTANCE;
      if(once)
      {
        x0 = x1;
@@ -201,19 +208,40 @@ void plot_waveform() // plot waveform and calculate THD
      tft.drawLine(x0, SCREENHEIGHT-1-lastvalue, x1, SCREENHEIGHT-1-value, COLOR_GREEN);
      x0 = x1;
      lastvalue = value;
-     datarmsac += value;
+     voltsrmsac += value;
      
   }
-  uint32_t datamean = datarmsac/(crossings[1]-crossings[0]+1);
-  datarmsac = 0;
+  uint32_t voltsmean = voltsrmsac/(crossings[1]-crossings[0]+1);
+  uint32_t amps1mean = 0;
+  uint32_t amps2mean = 0;
   for(int i = 0; i<=crossings[1]-crossings[0]; i++)
   {
-    datarmsac += sq((int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]-datamean);
+    if( i%2 )
+      amps2rms += (int16_t)ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE];
+    else
+      amps1rms += (int16_t)ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE];
   }
-  datarmsac = sqrt(datarmsac/(crossings[1]-crossings[0]+1));
-  Vrms = (datarmsac*uVpercount)/1000000;
+  amps1mean = (amps1mean/((crossings[1]-crossings[0]+1)/2));
+  amps2mean = (amps2mean/((crossings[1]-crossings[0]+1)/2));
+  voltsrmsac = 0;
+  amps1rms = 0;
+  amps2rms = 0;
+  for(int i = 0; i<=crossings[1]-crossings[0]; i++)
+  {
+    voltsrmsac += sq((int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]-voltsmean);
+    if( i%2 )
+      amps2rms += sq((int16_t)ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE]-amps2mean);
+    else
+      amps1rms += sq((int16_t)ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE]-amps1mean);
+  }
+  voltsrmsac = sqrt(voltsrmsac/(crossings[1]-crossings[0]+1));
+  amps1rms = sqrt(amps1rms/(crossings[1]-crossings[0]+1)); // counts
+  Amps1 = 50.0/3.3*amps1rms/1024; // amps
+  amps2rms = sqrt(amps2rms/(crossings[1]-crossings[0]+1)); // counts
+  Amps2 = 50.0/3.3*amps2rms/1024; // amps
+  Vrms = (voltsrmsac*uVpercount)/1000000;
 
-  freq = 1e6/((crossings[1]-crossings[0])*uspersample);
+  freq = 1.0173e6/((crossings[1]-crossings[0])*uspersample); // 1.0173 is experimentally determined correction factor for my clock
   
 
   // Calculate THD
@@ -260,11 +288,20 @@ void capture_slow()
   // Configure ADC speed for the slowest possible continuous conversion
   adc_set_prescaler(ADC_PRE_PCLK2_DIV_8);  // 9 MHz ADC Clock
   adc_set_sample_rate(ADC1, ADC_SMPR_239_5); // Sample for 239.5 ADC clock cycles (252 total clocks for sample + conversion)
+  adc_set_sample_rate(ADC2, ADC_SMPR_239_5);
   uspersample = 252/(72/8)+0.5; // Approx 35.7 kSps, which means about 595 samples per 60Hz cycle
 
   // Set up ADC
-  ADC1->regs->SQR3 = PIN_MAP[analogVoltagePin].adc_channel;
+  ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
+  ADC1->regs->SQR3 = PIN_MAP[analogVoltagePin].adc_channel; // ADC1 will read voltage only
+  adc_set_reg_seqlen(ADC2, 2); // ADC2 will scan both current clamps
+  ADC2->regs->SQR3 = (  PIN_MAP[clamp1Pin].adc_channel | ( PIN_MAP[clamp2Pin].adc_channel << 5 ) );
   ADC1->regs->CR2 |= ADC_CR2_CONT;    //Set the ADC in Continuous Mode
+  ADC2->regs->CR2 |= ADC_CR2_CONT;
+  ADC2->regs->CR1 |= ADC_CR1_SCAN;
+  ADC1->regs->CR2 |= ADC_CR2_DMA;     //Needs to be in DMA mode for dual mode to work
+  ADC2->regs->CR2 |= ADC_CR2_DMA;     //Needs to be in DMA mode for scan mode to work
+  ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
 
   bool lookfor;
   uint8_t trigger;
@@ -281,14 +318,15 @@ void capture_slow()
   ADCCounter = 0;
   nvic_globalirq_disable();
   ADC1->regs->CR2 |= ADC_CR2_SWSTART;
+  ADC2->regs->CR2 |= ADC_CR2_SWSTART;
   
   while(true)
   {
     while (!(ADC1->regs->SR & ADC_SR_EOC)) // Wait for next sample
           ;
-    
-    ADCBuffer[ADCCounter] = (ADC1->regs->DR) & ADC_DR_DATA; // Store sample; Reading ADC_DR clears the ADC_SR EOC bit
-    currentstate = (ADCBuffer[ADCCounter]>=TRIGGERLEVEL); 
+    ADCBuffer[ADCCounter] = ADC1->regs->DR; //(ADC1->regs->DR | (ADC2->regs->DR << 16)); // & ADC_DR_DATA; // Store sample; Reading ADC_DR clears the ADC_SR EOC bit. In simultaneous mode so this contains both ADC1 and ADC2 results
+    currentstate = ((int16_t)ADCBuffer[ADCCounter<<1]>=TRIGGERLEVEL);   // We trigger based on adc1
+    //DualBuffer[ADCCounter] = (ADC2->regs->DR) & ADC_DR_DATA; // Could check SR but shouldn't have to because we started the two ADC's at the same time
     ADCCounter = (ADCCounter+1) & (ADCBUFFERSIZE-1);
     
     switch(trigger)
@@ -332,7 +370,8 @@ void capture_slow()
       break;
   }
   nvic_globalirq_enable();
-
+  ADCCounter = 2*ADCCounter; // This function was looking at 32 bit elements whereas the plot function uses 16 bit
+  triggerindex = 2*triggerindex;
 }
 
 
@@ -368,6 +407,7 @@ void loop(void) {
   }
 
   // Simulated data
+  /*
   float tmodel = t_s + 0.001*(msec%1000);
   Vrms = 240 + 7*sin(tmodel/3) + 3*sin(tmodel/30);
   Amps1 = 19 + 8*sin(tmodel/4) + 9*sin(tmodel/37);
@@ -376,6 +416,7 @@ void loop(void) {
   Amps2 = 17 + 9*sin(tmodel/5) + 10*sin(tmodel/40);
   if( 0 > Amps2 )
     Amps2 = 0;
+  */
 
   // Store power consumption data
   Asum += Amps1;
