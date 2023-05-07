@@ -54,9 +54,8 @@ Adafruit_ILI9341_STM tft = Adafruit_ILI9341_STM(TFT_CS, TFT_DC, TFT_RST); // Use
 #define ADCBUFFERSIZE 2048 // must be power of two
 uint16_t triggerindex;
 uint16_t ADCCounter=0;
-uint32_t ADCBuffer[ADCBUFFERSIZE]; 
-//uint16_t DualBuffer[ADCBUFFERSIZE];
-//uint16_t ADCBuffer[ADCBUFFERSIZE]; 
+uint16_t DualBuffer[ADCBUFFERSIZE];
+uint16_t ADCBuffer[ADCBUFFERSIZE]; 
 /* = {
    184,  187,  190,  193,  196,  199,  202,  205,  208,  211,  214,  217,  221,  224,  227,  230 ,
    233,  236,  239,  242,  246,  249,  252,  255,  258,  261,  264,  268,  271,  274,  277,  280 ,
@@ -139,7 +138,7 @@ int Adiv = 0;
 
 int sum3(int i) // to filter out noise
 {
-  return (int16_t)ADCBuffer[(ADCCounter+i+ADCBUFFERSIZE-2)%ADCBUFFERSIZE]+(int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]+(int16_t)ADCBuffer[(ADCCounter+i+2)%ADCBUFFERSIZE];
+  return ADCBuffer[(ADCCounter+i+ADCBUFFERSIZE-1)%ADCBUFFERSIZE]+ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]+ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE];
 }
 
 void plot_waveform() // plot waveform and calculate THD
@@ -152,12 +151,12 @@ void plot_waveform() // plot waveform and calculate THD
   uint16_t foundpcrossings = 0;
   
   // Identify two consecutive positive crossings of zero volts
-  for( int i=2; i<ADCBUFFERSIZE-1; i++)
+  for( int i=1; i<ADCBUFFERSIZE-1; i++)
   {
-    if( (int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE] > datamax )
-      datamax = (int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE];
-    if( (int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE] < datamin )
-      datamin = (int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE];
+    if( ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE] > datamax )
+      datamax = ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE];
+    if( ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE] < datamin )
+      datamin = ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE];
     if ((sum3(i) <= 3*ZEROVOLTS) && (sum3(i + 1) > 3*ZEROVOLTS))
       crossings[foundpcrossings++] = i;
     if ( 2 == foundpcrossings )
@@ -184,7 +183,7 @@ void plot_waveform() // plot waveform and calculate THD
   uint32_t voltsrmsac = 0;
   uint32_t amps1rms = 0;
   uint32_t amps2rms = 0;
-  for( int i=1; i<crossings[1]-crossings[0]; i++)
+  for( int i=1; i<crossings[1]-crossings[0]+1; i++)
   {
     // Find the first index in the next column
     x1 = BARWIDTH + (240-2*BARWIDTH-1)*i/(crossings[1]-crossings[0]); //map( i, 0, crossings[1]-crossings[0], BARWIDTH+1, 240-BARWIDTH-1 );
@@ -198,7 +197,7 @@ void plot_waveform() // plot waveform and calculate THD
       x0 = x1;
       lastvalue = value;
     }*/
-     value = ((int16_t)ADCBuffer[(ADCCounter+crossings[0]+i)%ADCBUFFERSIZE]) >> SHIFTDISTANCE;
+     value = ( (ADCBuffer[(ADCCounter+crossings[0]+i)%ADCBUFFERSIZE]) ) >> SHIFTDISTANCE;
      if(once)
      {
        x0 = x1;
@@ -208,7 +207,7 @@ void plot_waveform() // plot waveform and calculate THD
      tft.drawLine(x0, SCREENHEIGHT-1-lastvalue, x1, SCREENHEIGHT-1-value, COLOR_GREEN);
      x0 = x1;
      lastvalue = value;
-     voltsrmsac += value;
+     voltsrmsac += value; // Not actually RMS yet, just going to use this to calculate mean first
      
   }
   uint32_t voltsmean = voltsrmsac/(crossings[1]-crossings[0]+1);
@@ -217,28 +216,28 @@ void plot_waveform() // plot waveform and calculate THD
   for(int i = 0; i<=crossings[1]-crossings[0]; i++)
   {
     if( i%2 )
-      amps2rms += (int16_t)ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE];
+      amps2mean += DualBuffer[(ADCCounter+crossings[0]+i)%ADCBUFFERSIZE];
     else
-      amps1rms += (int16_t)ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE];
+      amps1mean += DualBuffer[(ADCCounter+crossings[0]+i)%ADCBUFFERSIZE];
   }
   amps1mean = (amps1mean/((crossings[1]-crossings[0]+1)/2));
-  amps2mean = (amps2mean/((crossings[1]-crossings[0]+1)/2));
+  amps2mean = (amps2mean/((crossings[1]-crossings[0]+1)/2)); // in adc counts
   voltsrmsac = 0;
   amps1rms = 0;
   amps2rms = 0;
   for(int i = 0; i<=crossings[1]-crossings[0]; i++)
   {
-    voltsrmsac += sq((int16_t)ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]-voltsmean);
+    voltsrmsac += sq(ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]-voltsmean);
     if( i%2 )
-      amps2rms += sq((int16_t)ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE]-amps2mean);
+      amps2rms += sq(DualBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE]-amps2mean);
     else
-      amps1rms += sq((int16_t)ADCBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE]-amps1mean);
+      amps1rms += sq(DualBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE]-amps1mean);
   }
   voltsrmsac = sqrt(voltsrmsac/(crossings[1]-crossings[0]+1));
-  amps1rms = sqrt(amps1rms/(crossings[1]-crossings[0]+1)); // counts
-  Amps1 = 50.0/3.3*amps1rms/1024; // amps
-  amps2rms = sqrt(amps2rms/(crossings[1]-crossings[0]+1)); // counts
-  Amps2 = 50.0/3.3*amps2rms/1024; // amps
+  amps1rms = sqrt(amps1rms/(crossings[1]-crossings[0]+1)); // adc counts
+  Amps1 = 1.3*0.04028*amps1rms; // amps - 1.3 is a fudge factor experimentally identified on my hardware but might be biased by low-ish test current
+  amps2rms = sqrt(amps2rms/(crossings[1]-crossings[0]+1)); // adc counts
+  Amps2 = 1.3*0.04028*amps2rms; // amps
   Vrms = (voltsrmsac*uVpercount)/1000000;
 
   freq = 1.0173e6/((crossings[1]-crossings[0])*uspersample); // 1.0173 is experimentally determined correction factor for my clock
@@ -256,7 +255,7 @@ void plot_waveform() // plot waveform and calculate THD
   for(int i=0;i<FFTSIZE;i++)
   {
        n=0;
-       data[i] = (float)(ADCBuffer[(ADCCounter+crossings[0]+map(i,0,FFTSIZE-1,0,d))%ADCBUFFERSIZE]);
+       data[i] = (float)((uint16_t)ADCBuffer[(ADCCounter+crossings[0]+map(i,0,FFTSIZE-1,0,d))%ADCBUFFERSIZE]);
        im[i] = 0;
   }
   FFT.DCRemoval(data, FFTSIZE);
@@ -292,16 +291,22 @@ void capture_slow()
   uspersample = 252/(72/8)+0.5; // Approx 35.7 kSps, which means about 595 samples per 60Hz cycle
 
   // Set up ADC
-  ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
-  ADC1->regs->SQR3 = PIN_MAP[analogVoltagePin].adc_channel; // ADC1 will read voltage only
-  adc_set_reg_seqlen(ADC2, 2); // ADC2 will scan both current clamps
-  ADC2->regs->SQR3 = (  PIN_MAP[clamp1Pin].adc_channel | ( PIN_MAP[clamp2Pin].adc_channel << 5 ) );
+  //ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
+  ADC2->regs->SQR3 = PIN_MAP[analogVoltagePin].adc_channel; // ADC2 will read voltage only
+  ADC1->regs->CR1 |= ADC_CR1_SCAN; // ADC1 will scan both current clamps
+  ADC1->regs->SQR1 = 1 << 20; // 2 channel sequence length
+  ADC1->regs->SQR3 = (  PIN_MAP[clamp1Pin].adc_channel | ( PIN_MAP[clamp2Pin].adc_channel << 5 ) );
   ADC1->regs->CR2 |= ADC_CR2_CONT;    //Set the ADC in Continuous Mode
   ADC2->regs->CR2 |= ADC_CR2_CONT;
-  ADC2->regs->CR1 |= ADC_CR1_SCAN;
-  ADC1->regs->CR2 |= ADC_CR2_DMA;     //Needs to be in DMA mode for dual mode to work
-  ADC2->regs->CR2 |= ADC_CR2_DMA;     //Needs to be in DMA mode for scan mode to work
-  ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
+  //ADC1->regs->CR2 |= ADC_CR2_DMA;     //Needs to be in DMA mode for scan mode to work
+  //ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
+
+/*
+  // Set up DMA for ADC1
+  dma_init(DMA1);
+  dma_setup_transfer( DMA1, DMA_CH1, &ADC1->regs->DR, DMA_SIZE_16BITS, DualBuffer, DMA_SIZE_16BITS, DMA_CCR_MINC ); // DMA_MINC_MODE ??
+  dma_set_num_transfers(DMA1, DMA_CH1, ADCBUFFERSIZE);
+  dma_enable(DMA1, DMA_CH1);*/
 
   bool lookfor;
   uint8_t trigger;
@@ -317,22 +322,26 @@ void capture_slow()
   // Start conversion
   ADCCounter = 0;
   nvic_globalirq_disable();
-  ADC1->regs->CR2 |= ADC_CR2_SWSTART;
   ADC2->regs->CR2 |= ADC_CR2_SWSTART;
+  ADC1->regs->CR2 |= ADC_CR2_SWSTART;
   
   while(true)
   {
-    while (!(ADC1->regs->SR & ADC_SR_EOC)) // Wait for next sample
+    while (!(ADC2->regs->SR & ADC_SR_EOC)) // Wait for next sample
           ;
-    ADCBuffer[ADCCounter] = ADC1->regs->DR; //(ADC1->regs->DR | (ADC2->regs->DR << 16)); // & ADC_DR_DATA; // Store sample; Reading ADC_DR clears the ADC_SR EOC bit. In simultaneous mode so this contains both ADC1 and ADC2 results
-    currentstate = ((int16_t)ADCBuffer[ADCCounter<<1]>=TRIGGERLEVEL);   // We trigger based on adc1
-    //DualBuffer[ADCCounter] = (ADC2->regs->DR) & ADC_DR_DATA; // Could check SR but shouldn't have to because we started the two ADC's at the same time
+    ADCBuffer[ADCCounter] = ADC2->regs->DR; // & ADC_DR_DATA; //(ADC1->regs->DR | (ADC2->regs->DR << 16)); // & ADC_DR_DATA; // Store sample; Reading ADC_DR clears the ADC_SR EOC bit. In simultaneous mode so this contains both ADC1 and ADC2 results
+    currentstate = (ADCBuffer[ADCCounter]>=TRIGGERLEVEL);   // We trigger based on adc2
+    /*
+    while (!(ADC1->regs->SR & ADC_SR_EOC)) // Make sure ADC2 is ready too
+          ;*/
+    DualBuffer[ADCCounter] = ((ADC1->regs->DR) -128 ); // & ADC_DR_DATA;
     ADCCounter = (ADCCounter+1) & (ADCBUFFERSIZE-1);
+    
     
     switch(trigger)
     {
       case 5: // trigger-disabled period ( to make sure we fill at least ADCBUFFERSIZE-waitDuration before trigger )
-        if( ADCCounter > 256 )
+        if( ADCCounter > 16 )
           trigger--;
         break;
       case 4: // waiting
@@ -356,8 +365,9 @@ void capture_slow()
       case 1:
           if( ADCCounter == stopIndex )
           {
-            // Take the ADC out of continuous conversion mode
+            // Take the ADCs out of continuous conversion mode
             ADC1->regs->CR2 &= ~ADC_CR2_CONT;
+            ADC2->regs->CR2 &= ~ADC_CR2_CONT;
             buffercycles = TRIGGERTIMEOUT;
             trigger--;
           }
@@ -370,8 +380,8 @@ void capture_slow()
       break;
   }
   nvic_globalirq_enable();
-  ADCCounter = 2*ADCCounter; // This function was looking at 32 bit elements whereas the plot function uses 16 bit
-  triggerindex = 2*triggerindex;
+  //ADCCounter = ADCCounter; // This function was looking at 32 bit elements whereas the plot function uses 16 bit
+  //triggerindex = triggerindex;
 }
 
 
@@ -472,9 +482,9 @@ void loop(void) {
   tft.setTextColor(COLOR_BLUE);
   tft.setTextSize(3);
   tft.setCursor(2, SCREENHEIGHT-22);
-  tft.print((int)Amps1);
+  tft.print((int)(Amps1+0.5));
   tft.setCursor(SCREENWIDTH + 2 - BARWIDTH, SCREENHEIGHT-22 );
-  tft.print((int)Amps2);
+  tft.print((int)(Amps2+0.5));
   
   plot_waveform(); // Call this before printing statistics because it calculates the following statistics
   tft.setTextColor(COLOR_WHITE);
