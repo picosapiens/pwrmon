@@ -284,6 +284,12 @@ void capture_slow()
 {
   ADCCounter = 0;
 
+  // Disable ADC while we set things up
+  ADC1->regs->CR2 &= ~ADC_CR2_ADON;
+  ADC2->regs->CR2 &= ~ADC_CR2_ADON;
+  ADC1->regs->SR = 0;        // clear the status register
+  ADC2->regs->SR = 0;        // clear the status register
+
   // Configure ADC speed for the slowest possible continuous conversion
   adc_set_prescaler(ADC_PRE_PCLK2_DIV_8);  // 9 MHz ADC Clock
   adc_set_sample_rate(ADC1, ADC_SMPR_239_5); // Sample for 239.5 ADC clock cycles (252 total clocks for sample + conversion)
@@ -291,22 +297,24 @@ void capture_slow()
   uspersample = 252/(72/8)+0.5; // Approx 35.7 kSps, which means about 595 samples per 60Hz cycle
 
   // Set up ADC
-  //ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
+  ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
   ADC2->regs->SQR3 = PIN_MAP[analogVoltagePin].adc_channel; // ADC2 will read voltage only
   ADC1->regs->CR1 |= ADC_CR1_SCAN; // ADC1 will scan both current clamps
   ADC1->regs->SQR1 = 1 << 20; // 2 channel sequence length
   ADC1->regs->SQR3 = (  PIN_MAP[clamp1Pin].adc_channel | ( PIN_MAP[clamp2Pin].adc_channel << 5 ) );
   ADC1->regs->CR2 |= ADC_CR2_CONT;    //Set the ADC in Continuous Mode
   ADC2->regs->CR2 |= ADC_CR2_CONT;
-  //ADC1->regs->CR2 |= ADC_CR2_DMA;     //Needs to be in DMA mode for scan mode to work
-  //ADC1->regs->CR1 |= 6 << 16; // Regular simultaneous mode. Required for ADC1 only. ADC2 will follow.
+  ADC1->regs->CR2 |= ADC_CR2_DMA;     //Needs to be in DMA mode for scan mode to work
 
-/*
+  // Re-enable ADC
+  ADC1->regs->CR2 |= ADC_CR2_ADON;
+  ADC2->regs->CR2 |= ADC_CR2_ADON;
+
   // Set up DMA for ADC1
   dma_init(DMA1);
   dma_setup_transfer( DMA1, DMA_CH1, &ADC1->regs->DR, DMA_SIZE_16BITS, DualBuffer, DMA_SIZE_16BITS, DMA_CCR_MINC ); // DMA_MINC_MODE ??
   dma_set_num_transfers(DMA1, DMA_CH1, ADCBUFFERSIZE);
-  dma_enable(DMA1, DMA_CH1);*/
+  dma_enable(DMA1, DMA_CH1);
 
   bool lookfor;
   uint8_t trigger;
@@ -322,7 +330,7 @@ void capture_slow()
   // Start conversion
   ADCCounter = 0;
   nvic_globalirq_disable();
-  ADC2->regs->CR2 |= ADC_CR2_SWSTART;
+  //ADC2->regs->CR2 |= ADC_CR2_SWSTART; // Shouldn't be necessary in simultaneous mode
   ADC1->regs->CR2 |= ADC_CR2_SWSTART;
   
   while(true)
@@ -333,8 +341,8 @@ void capture_slow()
     currentstate = (ADCBuffer[ADCCounter]>=TRIGGERLEVEL);   // We trigger based on adc2
     /*
     while (!(ADC1->regs->SR & ADC_SR_EOC)) // Make sure ADC2 is ready too
-          ;*/
-    DualBuffer[ADCCounter] = ((ADC1->regs->DR) -128 ); // & ADC_DR_DATA;
+          ;
+    DualBuffer[ADCCounter] = ((ADC1->regs->DR) -128 ); // & ADC_DR_DATA;*/
     ADCCounter = (ADCCounter+1) & (ADCBUFFERSIZE-1);
     
     
@@ -488,13 +496,15 @@ void loop(void) {
   
   plot_waveform(); // Call this before printing statistics because it calculates the following statistics
   tft.setTextColor(COLOR_WHITE);
-  tft.fillRect(BARWIDTH+1,105, SCREENWIDTH-2*BARWIDTH-1, 56, COLOR_BLACK);
+  tft.fillRect(BARWIDTH+1,105, SCREENWIDTH-2*BARWIDTH-1, 72, COLOR_BLACK);
   tft.setCursor(BARWIDTH+2,105);
   tft.print((int)(Vrms+0.5)); tft.print("Vrms");
   tft.setCursor(BARWIDTH+2,130);
-  tft.print(freq); tft.print("Hz");
+  int freq10 = 10*freq+0.5;
+  tft.print(freq10/10); tft.print('.'); tft.print(freq10%10); tft.print("Hz");
   tft.setCursor(BARWIDTH+2,155);
-  tft.print((int)(100*thd+0.5)); tft.print("%THD");
+  int thd10 = 1000*thd+0.5;
+  tft.print(thd10/10); tft.print('.'); tft.print(thd10%10); tft.print("%THD");
 
   delay(100);
 }
