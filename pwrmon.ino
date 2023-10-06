@@ -1,4 +1,4 @@
-//-----------------------------------------------------------------------------
+v//-----------------------------------------------------------------------------
 // pwrmon.ino
 //-----------------------------------------------------------------------------
 // Copyright 2023 Picosapiens
@@ -123,7 +123,7 @@ uint16_t ADCBuffer[ADCBUFFERSIZE];
    138,  140,  143,  146,  149,  152,  154,  157,  160,  163,  166,  169,  172,  175,  178,  181 
 };*/
 float uspersample = 13.5; // nominal time step
-float uVpercount = 60000;
+float uVpercount = 56300;
 
 float freq = 0;
 float thd = 0;
@@ -177,7 +177,7 @@ void plot_waveform() // plot waveform and calculate THD
   
   //tft.drawFastVLine(120,220,100,COLOR_YELLOW); // col, y, h, color
   //tft.fillRect(col,220, 1, 100, COLOR_BLACK);
-  tft.fillRect(col,220, 240-2*BARWIDTH-1, 100, COLOR_BLACK);
+  tft.fillRect(col,200, 240-2*BARWIDTH-1, 120, COLOR_BLACK);
 
   bool once = true;
   uint32_t voltsrmsac = 0;
@@ -227,7 +227,7 @@ void plot_waveform() // plot waveform and calculate THD
   amps2rms = 0;
   for(int i = 0; i<=crossings[1]-crossings[0]; i++)
   {
-    voltsrmsac += sq(ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]-voltsmean);
+    voltsrmsac += sq(ADCBuffer[(ADCCounter+i)%ADCBUFFERSIZE]-voltsmean) >> 2; // bit shift because I think it might be overflowing?
     if( i%2 )
       amps2rms += sq(DualBuffer[(ADCCounter+i+1)%ADCBUFFERSIZE]-amps2mean);
     else
@@ -238,7 +238,7 @@ void plot_waveform() // plot waveform and calculate THD
   Amps1 = 1.3*0.04028*amps1rms; // amps - 1.3 is a fudge factor experimentally identified on my hardware but might be biased by low-ish test current
   amps2rms = sqrt(amps2rms/(crossings[1]-crossings[0]+1)); // adc counts
   Amps2 = 1.3*0.04028*amps2rms; // amps
-  Vrms = (voltsrmsac*uVpercount)/1000000;
+  Vrms = (voltsrmsac*uVpercount*4)/1000000; // Factor of 4 because of the bit shift in the for loop
 
   freq = 1.0173e6/((crossings[1]-crossings[0])*uspersample); // 1.0173 is experimentally determined correction factor for my clock
   
